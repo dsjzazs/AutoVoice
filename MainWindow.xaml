@@ -54,6 +54,8 @@
                     Click="StopButton_Click" IsEnabled="False"/>
             <Button x:Name="TestButton" Content="Test Voice" Width="100" Height="30" Margin="10,0" 
                     Click="TestButton_Click"/>
+            <Button x:Name="DiagnosticButton" Content="Voice Diagnostic" Width="120" Height="30" Margin="10,0" 
+                    Click="DiagnosticButton_Click"/>
         </StackPanel>
 
         <!-- 状态显示 -->

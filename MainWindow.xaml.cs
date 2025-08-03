@@ -174,15 +174,49 @@ namespace AutoVoice
             AddStatusMessage("播放测试语音...");
         }
 
+        private void DiagnosticButton_Click(object? sender, RoutedEventArgs e)
+        {
+            string voiceInfo = VoiceDiagnostic.GetVoiceInfo();
+            
+            // 显示诊断信息
+            var diagnosticWindow = new Window
+            {
+                Title = "语音包诊断信息",
+                Width = 600,
+                Height = 500,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this
+            };
+
+            var textBox = new TextBox
+            {
+                Text = voiceInfo,
+                IsReadOnly = true,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+                FontSize = 12
+            };
+
+            diagnosticWindow.Content = textBox;
+            diagnosticWindow.Show();
+            
+            AddStatusMessage("已显示语音包诊断信息");
+        }
+
         private void VoiceComboBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
         {
             if (synthesizer != null && VoiceComboBox.SelectedItem != null)
             {
                 try
                 {
-                    synthesizer.SelectVoice(VoiceComboBox.SelectedItem.ToString());
-                    UpdateSettingsDisplay();
-                    AddStatusMessage($"已切换到语音: {VoiceComboBox.SelectedItem}");
+                    string? selectedVoice = VoiceComboBox.SelectedItem.ToString();
+                    if (!string.IsNullOrEmpty(selectedVoice))
+                    {
+                        synthesizer.SelectVoice(selectedVoice);
+                        UpdateSettingsDisplay();
+                        AddStatusMessage($"已切换到语音: {selectedVoice}");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -216,8 +250,8 @@ namespace AutoVoice
         private void UpdateSettingsDisplay()
         {
             string voiceName = VoiceComboBox.SelectedItem?.ToString() ?? "未选择";
-            string speed = SpeedTextBlock.Text;
-            string volume = VolumeTextBlock.Text;
+            string speed = SpeedTextBlock.Text ?? "1.0x";
+            string volume = VolumeTextBlock.Text ?? "100%";
             
             SettingsTextBlock.Text = $"语音: {voiceName} | 语速: {speed} | 音量: {volume}";
         }
