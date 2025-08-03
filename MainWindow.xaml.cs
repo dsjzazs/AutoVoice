@@ -28,7 +28,6 @@ namespace AutoVoice
         {
             InitializeComponent();
             InitializeSpeechSynthesizer();
-            UpdateSettingsDisplay();
 
             AddStatusMessage("程序初始化完成");
         }
@@ -63,7 +62,7 @@ namespace AutoVoice
             if (clipboardTimer == null)
             {
                 clipboardTimer = new DispatcherTimer();
-                clipboardTimer.Interval = TimeSpan.FromMilliseconds(500); // 每500毫秒检查一次
+                clipboardTimer.Interval = TimeSpan.FromMilliseconds(100); // 每500毫秒检查一次
                 clipboardTimer.Tick += ClipboardTimer_Tick;
                 AddStatusMessage("剪贴板监听定时器已创建");
             }
@@ -170,6 +169,12 @@ namespace AutoVoice
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
+            
+            // 设置滑块的初始值
+            MaxTextLengthSlider.Value = maxTextLength;
+            MaxTextLengthTextBlock.Text = maxTextLength.ToString();
+            
+            UpdateSettingsDisplay();
             AddStatusMessage("窗口初始化完成");
         }
 
@@ -184,26 +189,34 @@ namespace AutoVoice
                 // 检查是否有新的英文文本或检测到复制键
                 if (!string.IsNullOrEmpty(currentText) && (currentText != lastClipboardText || copyKeyPressed))
                 {
-                    string englishText = ExtractEnglishText(currentText);
+                    var text = ExtractEnglishWords(currentText);
+                    if (text.Count() > maxTextLength)
+                    {
+                        copyKeyPressed = false; // 重置复制键标记
+                        lastClipboardText = currentText;
+                        AddStatusMessage($"超长文本不与阅读 (超过{maxTextLength}个单词，共计{text.Count()}个)");
+                        return;
+                    }
+                    var english = string.Join(" ", text);
 
-                    if (!string.IsNullOrEmpty(englishText))
+                    if (!string.IsNullOrEmpty(english))
                     {
                         lastClipboardText = currentText;
 
                         // 检查是否与上次阅读的文本相同
-                        bool isRepeatedText = englishText.Equals(lastSpokenText, StringComparison.OrdinalIgnoreCase);
-                        lastSpokenText = englishText;
+                        bool isRepeatedText = english.Equals(lastSpokenText, StringComparison.OrdinalIgnoreCase);
+                        lastSpokenText = english;
                         if (isRepeatedText)
                         {
                             // 如果是重复文本，使用低速模式
-                            await SpeakTextAsync(englishText, lostRate);
-                            AddStatusMessage($"检测到重复内容，使用低速模式重新阅读: {englishText}");
+                            await SpeakTextAsync(english, lostRate);
+                            AddStatusMessage($"检测到重复内容，使用低速模式重新阅读: {english}");
                         }
                         else
                         {
                             // 新文本，使用正常速度
-                            await SpeakTextAsync(englishText, originalRate);
-                            AddStatusMessage($"正在阅读: {englishText}");
+                            await SpeakTextAsync(english, originalRate);
+                            AddStatusMessage($"正在阅读: {english}");
                         }
 
                         copyKeyPressed = false; // 重置复制键标记
@@ -216,24 +229,15 @@ namespace AutoVoice
             }
         }
 
-        private string ExtractEnglishText(string text)
+        private IEnumerable<string> ExtractEnglishWords(string text)
         {
-            // 使用正则表达式提取英文单词和句子
-            // 匹配英文单词、标点符号和空格
-            string pattern = @"[a-zA-Z\s\.,!?;:'""()-]+";
-            var matches = Regex.Matches(text, pattern);
+            if (string.IsNullOrEmpty(text))
+                return Enumerable.Empty<string>();
 
-            var englishParts = new List<string>();
-            foreach (Match match in matches)
-            {
-                string part = match.Value.Trim();
-                if (!string.IsNullOrEmpty(part) && ContainsEnglish(part))
-                {
-                    englishParts.Add(part);
-                }
-            }
-
-            return string.Join(" ", englishParts);
+            // 直接使用 LINQ 简化代码
+            return Regex.Matches(text, @"[a-zA-Z]+")
+                        .Cast<Match>()
+                        .Select(match => match.Value);
         }
 
         private bool ContainsEnglish(string text)
@@ -373,6 +377,7 @@ namespace AutoVoice
         }
         private int originalRate;
         private int lostRate = -5;
+        private int maxTextLength = 4; // 文本长度限制
 
         private void SpeedSlider_ValueChanged(object? sender, RoutedPropertyChangedEventArgs<double> e)
         {
@@ -397,13 +402,25 @@ namespace AutoVoice
             }
         }
 
+        private void MaxTextLengthSlider_ValueChanged(object? sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            maxTextLength = (int)MaxTextLengthSlider.Value;
+            if (MaxTextLengthTextBlock != null)
+            {
+                MaxTextLengthTextBlock.Text = maxTextLength.ToString();
+            }
+            UpdateSettingsDisplay();
+        }
+
         private void UpdateSettingsDisplay()
         {
+            if (SettingsTextBlock == null) return;
+            
             string voiceName = VoiceComboBox.SelectedItem?.ToString() ?? "未选择";
-            string speed = SpeedTextBlock.Text ?? "1.0x";
-            string volume = VolumeTextBlock.Text ?? "100%";
+            string speed = SpeedTextBlock?.Text ?? "1.0x";
+            string volume = VolumeTextBlock?.Text ?? "100%";
 
-            SettingsTextBlock.Text = $"语音: {voiceName} | 语速: {speed} | 音量: {volume}";
+            SettingsTextBlock.Text = $"语音: {voiceName} | 语速: {speed} | 音量: {volume} | 文本长度限制: {maxTextLength}";
         }
 
         private void AddStatusMessage(string message)
