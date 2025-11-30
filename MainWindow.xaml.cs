@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Speech.Synthesis;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,45 +14,169 @@ namespace AutoVoice
 {
     public partial class MainWindow : Window
     {
-        private SpeechSynthesizer? synthesizer;
+        private IVoiceService? voiceService;
         private bool isListening = false;
         private string lastClipboardText = "";
-        private string lastSpokenText = ""; // è®°å½•ä¸Šæ¬¡é˜…è¯»çš„æ–‡æœ¬
+        private string lastSpokenText = "";
         private DispatcherTimer? clipboardTimer;
-        private bool copyKeyPressed = false; // æ ‡è®°æ˜¯å¦æ£€æµ‹åˆ°å¤åˆ¶é”®
-        private IntPtr keyboardHookId = IntPtr.Zero; // å…¨å±€é”®ç›˜é’©å­ID
-        private LowLevelKeyboardProc? keyboardProc; // ä¿æŒdelegateå¼•ç”¨
+        private bool copyKeyPressed = false;
+        private IntPtr keyboardHookId = IntPtr.Zero;
+        private LowLevelKeyboardProc? keyboardProc;
+        private string currentEngine = "Piper";
+        private bool isInitializing = true; // Ìí¼Ó³õÊ¼»¯±êÖ¾
+        private bool isSwitchingEngine = false; // Ìí¼ÓÇĞ»»ÒıÇæ±êÖ¾
 
         public MainWindow()
         {
             InitializeComponent();
             InitializeSpeechSynthesizer();
 
-            AddStatusMessage("ç¨‹åºåˆå§‹åŒ–å®Œæˆ");
+            AddStatusMessage("³ÌĞò³õÊ¼»¯Íê³É");
         }
 
-        private void InitializeSpeechSynthesizer()
+        private async void InitializeSpeechSynthesizer()
         {
             try
             {
-                synthesizer = new SpeechSynthesizer();
-
-                // è·å–å¯ç”¨çš„è¯­éŸ³
-                var voices = synthesizer.GetInstalledVoices();
-                VoiceComboBox.ItemsSource = voices.Select(v => v.VoiceInfo.Name).ToList();
-
-                if (VoiceComboBox.Items.Count > 0)
-                {
-                    VoiceComboBox.SelectedIndex = 0;
-                }
-
-                // è®¾ç½®é»˜è®¤å‚æ•°
-                synthesizer.Rate = 0; // æ­£å¸¸é€Ÿåº¦
-                synthesizer.Volume = 100; // æœ€å¤§éŸ³é‡
+                isInitializing = true;
+                await SwitchToEngine("Piper");
+                isInitializing = false;
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"åˆå§‹åŒ–è¯­éŸ³åˆæˆå™¨å¤±è´¥: {ex.Message}", "é”™è¯¯", MessageBoxButton.OK, MessageBoxImage.Error);
+                isInitializing = false;
+                MessageBox.Show($"³õÊ¼»¯ÓïÒôºÏ³ÉÆ÷Ê§°Ü: {ex.Message}", "´íÎó", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private async Task SwitchToEngine(string engineName)
+        {
+            try
+            {
+                isSwitchingEngine = true;
+                
+                // ½ûÓÃ¿Ø¼ş£¬·ÀÖ¹ÓÃ»§ÔÚÇĞ»»¹ı³ÌÖĞ½øĞĞ²Ù×÷
+                EngineComboBox.IsEnabled = false;
+                VoiceComboBox.IsEnabled = false;
+                StartButton.IsEnabled = false;
+                TestButton.IsEnabled = false;
+                
+                AddStatusMessage($"ÕıÔÚÇĞ»»µ½ {engineName} ÒıÇæ...");
+
+                // ÇåÀí¾ÉµÄ·şÎñ
+                voiceService?.Dispose();
+                voiceService = null;
+
+                currentEngine = engineName;
+
+                if (engineName == "Piper")
+                {
+                    var piperService = new PiperVoiceService();
+                    voiceService = piperService;
+
+                    var (isAvailable, checkMessage) = await piperService.IsAvailableAsync();
+                    AddStatusMessage(checkMessage);
+                    
+                    if (!isAvailable)
+                    {
+                        AddStatusMessage("Piper TTS Î´°²×°£¬ÕıÔÚ³¢ÊÔ°²×°...");
+                        var (success, message) = await piperService.InstallPiperAsync();
+                        AddStatusMessage(message);
+                        
+                        if (!success)
+                        {
+                            MessageBox.Show($"Piper °²×°Ê§°Ü£¬ÇëÊÖ¶¯°²×°:\npip install piper-tts\n\n{message}", 
+                                "¾¯¸æ", MessageBoxButton.OK, MessageBoxImage.Warning);
+                            // ÖØĞÂÆôÓÃ¿Ø¼ş
+                            EngineComboBox.IsEnabled = true;
+                            VoiceComboBox.IsEnabled = true;
+                            StartButton.IsEnabled = true;
+                            TestButton.IsEnabled = true;
+                            isSwitchingEngine = false;
+                            return;
+                        }
+                    }
+
+                    // »ñÈ¡¿ÉÓÃµÄÓïÒô
+                    AddStatusMessage("ÕıÔÚ»ñÈ¡¿ÉÓÃÓïÒôÁĞ±í£¬ÇëÉÔºò...");
+                    var voices = await voiceService.GetAvailableVoicesAsync();
+                    VoiceComboBox.ItemsSource = voices;
+
+                    if (VoiceComboBox.Items.Count > 0)
+                    {
+                        VoiceComboBox.SelectedIndex = 0;
+                        voiceService.CurrentModel = voices[0];
+                    }
+                }
+                else // Windows TTS
+                {
+                    voiceService = new WindowsVoiceService();
+
+                    var (isAvailable, checkMessage) = await voiceService.IsAvailableAsync();
+                    AddStatusMessage(checkMessage);
+
+                    var voices = await voiceService.GetAvailableVoicesAsync();
+                    VoiceComboBox.ItemsSource = voices;
+
+                    if (VoiceComboBox.Items.Count > 0)
+                    {
+                        VoiceComboBox.SelectedIndex = 0;
+                        voiceService.CurrentModel = voices[0];
+                    }
+                }
+
+                // ÉèÖÃÄ¬ÈÏ²ÎÊı
+                voiceService.Speed = 1.0;
+                voiceService.Volume = 100;
+                
+                UpdateSettingsDisplay();
+                AddStatusMessage($"{voiceService.EngineName} ³õÊ¼»¯Íê³É");
+                
+                // ÖØĞÂÆôÓÃ¿Ø¼ş
+                EngineComboBox.IsEnabled = true;
+                VoiceComboBox.IsEnabled = true;
+                StartButton.IsEnabled = true;
+                TestButton.IsEnabled = true;
+                
+                isSwitchingEngine = false;
+            }
+            catch (Exception ex)
+            {
+                AddStatusMessage($"ÇĞ»»ÒıÇæÊ§°Ü: {ex.Message}");
+                
+                // ·¢Éú´íÎóÊ±Ò²ÒªÖØĞÂÆôÓÃ¿Ø¼ş
+                EngineComboBox.IsEnabled = true;
+                VoiceComboBox.IsEnabled = true;
+                StartButton.IsEnabled = true;
+                TestButton.IsEnabled = true;
+                
+                isSwitchingEngine = false;
+                throw;
+            }
+        }
+
+        private async void EngineComboBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            // Èç¹ûÕıÔÚ³õÊ¼»¯»òÕıÔÚÇĞ»»ÒıÇæ£¬ºöÂÔ´ËÊÂ¼ş
+            if (isInitializing || isSwitchingEngine)
+            {
+                return;
+            }
+            
+            if (EngineComboBox.SelectedItem != null)
+            {
+                var selectedItem = (ComboBoxItem)EngineComboBox.SelectedItem;
+                string? engine = selectedItem.Tag?.ToString();
+                
+                if (!string.IsNullOrEmpty(engine) && engine != currentEngine)
+                {
+                    if (isListening)
+                    {
+                        StopButton_Click(null, new RoutedEventArgs());
+                    }
+
+                    await SwitchToEngine(engine);
+                }
             }
         }
 
@@ -62,15 +185,12 @@ namespace AutoVoice
             if (clipboardTimer == null)
             {
                 clipboardTimer = new DispatcherTimer();
-                clipboardTimer.Interval = TimeSpan.FromMilliseconds(100); // æ¯500æ¯«ç§’æ£€æŸ¥ä¸€æ¬¡
+                clipboardTimer.Interval = TimeSpan.FromMilliseconds(100);
                 clipboardTimer.Tick += ClipboardTimer_Tick;
-                AddStatusMessage("å‰ªè´´æ¿ç›‘å¬å®šæ—¶å™¨å·²åˆ›å»º");
+                AddStatusMessage("¼ôÌù°å¼àÌı¶¨Ê±Æ÷ÒÑ´´½¨");
             }
         }
 
-
-
-        // Windows API å£°æ˜
         [DllImport("user32.dll")]
         private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
 
@@ -94,22 +214,21 @@ namespace AutoVoice
             {
                 if (keyboardHookId == IntPtr.Zero)
                 {
-                    // ä¿æŒdelegateå¼•ç”¨ï¼Œé˜²æ­¢è¢«GCå›æ”¶
                     keyboardProc = KeyboardProc;
                     keyboardHookId = SetHook(keyboardProc);
                     if (keyboardHookId != IntPtr.Zero)
                     {
-                        AddStatusMessage("å…¨å±€é”®ç›˜é’©å­æ³¨å†ŒæˆåŠŸ");
+                        AddStatusMessage("È«¾Ö¼üÅÌ¹³×Ó×¢²á³É¹¦");
                     }
                     else
                     {
-                        AddStatusMessage("å…¨å±€é”®ç›˜é’©å­æ³¨å†Œå¤±è´¥");
+                        AddStatusMessage("È«¾Ö¼üÅÌ¹³×Ó×¢²áÊ§°Ü");
                     }
                 }
             }
             catch (Exception ex)
             {
-                AddStatusMessage($"æ³¨å†Œå…¨å±€é”®ç›˜é’©å­æ—¶å‡ºé”™: {ex.Message}");
+                AddStatusMessage($"×¢²áÈ«¾Ö¼üÅÌ¹³×ÓÊ±³ö´í: {ex.Message}");
             }
         }
 
@@ -118,26 +237,29 @@ namespace AutoVoice
             using (var curProcess = System.Diagnostics.Process.GetCurrentProcess())
             using (var curModule = curProcess.MainModule)
             {
-                return SetWindowsHookEx(13, proc, GetModuleHandle(curModule.ModuleName), 0);
+                if (curModule != null)
+                {
+                    return SetWindowsHookEx(13, proc, GetModuleHandle(curModule.ModuleName), 0);
+                }
+                return IntPtr.Zero;
             }
         }
 
         private IntPtr KeyboardProc(int nCode, IntPtr wParam, IntPtr lParam)
         {
-            if (nCode >= 0 && wParam == (IntPtr)0x0100) // WM_KEYDOWN
+            if (nCode >= 0 && wParam == (IntPtr)0x0100)
             {
                 int vkCode = Marshal.ReadInt32(lParam);
 
-                // æ£€æŸ¥æ˜¯å¦æŒ‰ä¸‹äº†Ctrl+C
-                bool ctrlPressed = (GetAsyncKeyState(0x11) & 0x8000) != 0; // VK_CONTROL
-                if (ctrlPressed && vkCode == 0x43) // 'C' key
+                bool ctrlPressed = (GetAsyncKeyState(0x11) & 0x8000) != 0;
+                if (ctrlPressed && vkCode == 0x43)
                 {
-                    if (isListening && !copyKeyPressed) // é¿å…é‡å¤è§¦å‘
+                    if (isListening && !copyKeyPressed)
                     {
                         copyKeyPressed = true;
                         Dispatcher.Invoke(() =>
                         {
-                            AddStatusMessage("å…¨å±€æ£€æµ‹åˆ°Ctrl+CæŒ‰é”®");
+                            AddStatusMessage("È«¾Ö¼ì²âµ½Ctrl+C°´¼ü");
                         });
                     }
                 }
@@ -154,28 +276,25 @@ namespace AutoVoice
                 {
                     UnhookWindowsHookEx(keyboardHookId);
                     keyboardHookId = IntPtr.Zero;
-                    keyboardProc = null; // é‡Šæ”¾delegateå¼•ç”¨
-                    AddStatusMessage("å…¨å±€é”®ç›˜é’©å­å·²æ¸…ç†");
+                    keyboardProc = null;
+                    AddStatusMessage("È«¾Ö¼üÅÌ¹³×ÓÒÑÇåÀí");
                 }
             }
             catch (Exception ex)
             {
-                AddStatusMessage($"æ¸…ç†å…¨å±€é”®ç›˜é’©å­æ—¶å‡ºé”™: {ex.Message}");
+                AddStatusMessage($"ÇåÀíÈ«¾Ö¼üÅÌ¹³×ÓÊ±³ö´í: {ex.Message}");
             }
         }
-
-
 
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
             
-            // è®¾ç½®æ»‘å—çš„åˆå§‹å€¼
             MaxTextLengthSlider.Value = maxTextLength;
             MaxTextLengthTextBlock.Text = maxTextLength.ToString();
             
             UpdateSettingsDisplay();
-            AddStatusMessage("çª—å£åˆå§‹åŒ–å®Œæˆ");
+            AddStatusMessage("´°¿Ú³õÊ¼»¯Íê³É");
         }
 
         private async void ClipboardTimer_Tick(object? sender, EventArgs e)
@@ -186,15 +305,14 @@ namespace AutoVoice
             {
                 string currentText = Clipboard.GetText();
 
-                // æ£€æŸ¥æ˜¯å¦æœ‰æ–°çš„è‹±æ–‡æ–‡æœ¬æˆ–æ£€æµ‹åˆ°å¤åˆ¶é”®
                 if (!string.IsNullOrEmpty(currentText) && (currentText != lastClipboardText || copyKeyPressed))
                 {
                     var text = ExtractEnglishWords(currentText);
                     if (text.Count() > maxTextLength)
                     {
-                        copyKeyPressed = false; // é‡ç½®å¤åˆ¶é”®æ ‡è®°
+                        copyKeyPressed = false;
                         lastClipboardText = currentText;
-                        AddStatusMessage($"è¶…é•¿æ–‡æœ¬ä¸ä¸é˜…è¯» (è¶…è¿‡{maxTextLength}ä¸ªå•è¯ï¼Œå…±è®¡{text.Count()}ä¸ª)");
+                        AddStatusMessage($"³¬³¤ÎÄ±¾²»ÓëÔÄ¶Á ( ³¬¹ı{maxTextLength}¸öµ¥´Ê£¬¹²¼Æ{text.Count()}¸ö)");
                         return;
                     }
                     var english = string.Join(" ", text);
@@ -203,29 +321,25 @@ namespace AutoVoice
                     {
                         lastClipboardText = currentText;
 
-                        // æ£€æŸ¥æ˜¯å¦ä¸ä¸Šæ¬¡é˜…è¯»çš„æ–‡æœ¬ç›¸åŒ
                         bool isRepeatedText = english.Equals(lastSpokenText, StringComparison.OrdinalIgnoreCase);
-                        lastSpokenText = english;
                         if (isRepeatedText)
                         {
-                            // å¦‚æœæ˜¯é‡å¤æ–‡æœ¬ï¼Œä½¿ç”¨ä½é€Ÿæ¨¡å¼
-                            await SpeakTextAsync(english, lostRate);
-                            AddStatusMessage($"æ£€æµ‹åˆ°é‡å¤å†…å®¹ï¼Œä½¿ç”¨ä½é€Ÿæ¨¡å¼é‡æ–°é˜…è¯»: {english}");
+                            AddStatusMessage($"¼ì²âµ½ÖØ¸´ÄÚÈİ£¬Ìø¹ı²¥·Å: {english}");
                         }
                         else
                         {
-                            // æ–°æ–‡æœ¬ï¼Œä½¿ç”¨æ­£å¸¸é€Ÿåº¦
+                            lastSpokenText = english;
                             await SpeakTextAsync(english, originalRate);
-                            AddStatusMessage($"æ­£åœ¨é˜…è¯»: {english}");
+                            AddStatusMessage($"ÕıÔÚÔÄ¶Á: {english}");
                         }
 
-                        copyKeyPressed = false; // é‡ç½®å¤åˆ¶é”®æ ‡è®°
+                        copyKeyPressed = false;
                     }
                 }
             }
             catch (Exception ex)
             {
-                AddStatusMessage($"è¯»å–å‰ªè´´æ¿æ—¶å‡ºé”™: {ex.Message}");
+                AddStatusMessage($"¶ÁÈ¡¼ôÌù°åÊ±³ö´í: {ex.Message}");
             }
         }
 
@@ -234,55 +348,58 @@ namespace AutoVoice
             if (string.IsNullOrEmpty(text))
                 return Enumerable.Empty<string>();
 
-            // ç›´æ¥ä½¿ç”¨ LINQ ç®€åŒ–ä»£ç 
             return Regex.Matches(text, @"[a-zA-Z]+")
                         .Cast<Match>()
                         .Select(match => match.Value);
         }
 
-        private bool ContainsEnglish(string text)
+        private async Task SpeakTextAsync(string text, double speed)
         {
-            // æ£€æŸ¥æ˜¯å¦åŒ…å«è‹±æ–‡å­—æ¯
-            return text.Any(c => char.IsLetter(c) && c <= 127);
-        }
-
-        private async Task SpeakTextAsync(string text, int rate)
-        {
-            if (synthesizer == null || string.IsNullOrEmpty(text)) return;
+            if (voiceService == null || string.IsNullOrEmpty(text)) return;
 
             try
             {
-                // åœæ­¢å½“å‰æ­£åœ¨æ’­æ”¾çš„è¯­éŸ³
-                if (synthesizer.State == SynthesizerState.Speaking)
-                {
-                    synthesizer.SpeakAsyncCancelAll();
-                }
+                voiceService.Stop();
+                voiceService.Speed = speed;
 
-                // å¼‚æ­¥æ’­æ”¾è¯­éŸ³
-                await Task.Run(() =>
+                var (success, message) = await voiceService.SpeakAsync(text);
+                
+                if (!success)
                 {
-                    // æ¢å¤åŸå§‹è¯­é€Ÿè®¾ç½®
-                    synthesizer.Rate = rate;
-                    synthesizer.SpeakAsync(text);
-                });
+                    AddStatusMessage($"ÓïÒô²¥·ÅÊ§°Ü: {message}");
+                }
             }
             catch (Exception ex)
             {
-                AddStatusMessage($"è¯­éŸ³æ’­æ”¾å¤±è´¥: {ex.Message}");
+                AddStatusMessage($"ÓïÒô²¥·ÅÊ§°Ü: {ex.Message}");
             }
         }
-        private void StartButton_Click(object? sender, RoutedEventArgs e)
+
+        private async void StartButton_Click(object? sender, RoutedEventArgs e)
         {
-            if (synthesizer == null)
+            if (voiceService == null)
             {
-                MessageBox.Show("è¯­éŸ³åˆæˆå™¨æœªåˆå§‹åŒ–ï¼Œæ— æ³•å¼€å§‹ç›‘å¬ã€‚", "é”™è¯¯", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("ÓïÒôºÏ³ÉÆ÷Î´³õÊ¼»¯£¬ÎŞ·¨¿ªÊ¼¼àÌı¡£", "´íÎó", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
 
-            // å»¶è¿Ÿåˆ›å»ºå®šæ—¶å™¨
-            InitializeClipboardTimer();
+            if (currentEngine == "Piper" && voiceService is PiperVoiceService piperService)
+            {
+                if (!piperService.IsVoiceDownloaded(voiceService.CurrentModel))
+                {
+                    AddStatusMessage($"ÕıÔÚÏÂÔØÓïÒôÄ£ĞÍ: {voiceService.CurrentModel}...");
+                    var (success, message) = await piperService.DownloadVoiceAsync(voiceService.CurrentModel);
+                    AddStatusMessage(message);
+                    
+                    if (!success)
+                    {
+                        MessageBox.Show($"ÓïÒôÄ£ĞÍÏÂÔØÊ§°Ü£¬ÎŞ·¨¿ªÊ¼¼àÌı¡£\n{message}", "´íÎó", MessageBoxButton.OK, MessageBoxImage.Error);
+                        return;
+                    }
+                }
+            }
 
-            // æ³¨å†Œå…¨å±€çƒ­é”®
+            InitializeClipboardTimer();
             RegisterGlobalKeyboardHook();
 
             isListening = true;
@@ -290,10 +407,9 @@ namespace AutoVoice
             StopButton.IsEnabled = true;
             clipboardTimer?.Start();
 
-            // é‡ç½®æ–‡æœ¬è®°å½•
             lastSpokenText = "";
 
-            AddStatusMessage("å¼€å§‹ç›‘å¬å‰ªè´´æ¿...");
+            AddStatusMessage("¿ªÊ¼¼àÌı¼ôÌù°å...");
         }
 
         private void StopButton_Click(object? sender, RoutedEventArgs e)
@@ -303,36 +419,28 @@ namespace AutoVoice
             StopButton.IsEnabled = false;
             clipboardTimer?.Stop();
 
-            // åœæ­¢å½“å‰æ’­æ”¾çš„è¯­éŸ³
-            if (synthesizer != null && synthesizer.State == SynthesizerState.Speaking)
-            {
-                synthesizer.SpeakAsyncCancelAll();
-            }
-
-            // æ³¨é”€å…¨å±€çƒ­é”®
+            voiceService?.Stop();
             UnregisterGlobalKeyboardHook();
 
-            // é‡ç½®æ–‡æœ¬è®°å½•
             lastSpokenText = "";
 
-            AddStatusMessage("å·²åœæ­¢ç›‘å¬ã€‚");
+            AddStatusMessage("ÒÑÍ£Ö¹¼àÌı¡£");
         }
 
         private async void TestButton_Click(object? sender, RoutedEventArgs e)
         {
             string testText = "Hello, this is a test of the AutoVoice application. The speech synthesis is working correctly.";
             await SpeakTextAsync(testText, originalRate);
-            AddStatusMessage("æ’­æ”¾æµ‹è¯•è¯­éŸ³...");
+            AddStatusMessage("²¥·Å²âÊÔÓïÒô...");
         }
 
         private void DiagnosticButton_Click(object? sender, RoutedEventArgs e)
         {
-            string voiceInfo = VoiceDiagnostic.GetVoiceInfo();
+            string voiceInfo = VoiceDiagnostic.GetVoiceInfo(currentEngine);
 
-            // æ˜¾ç¤ºè¯Šæ–­ä¿¡æ¯
             var diagnosticWindow = new Window
             {
-                Title = "è¯­éŸ³åŒ…è¯Šæ–­ä¿¡æ¯",
+                Title = "ÓïÒô°üÕï¶ÏĞÅÏ¢",
                 Width = 600,
                 Height = 500,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -352,41 +460,52 @@ namespace AutoVoice
             diagnosticWindow.Content = textBox;
             diagnosticWindow.Show();
 
-            AddStatusMessage("å·²æ˜¾ç¤ºè¯­éŸ³åŒ…è¯Šæ–­ä¿¡æ¯");
+            AddStatusMessage("ÒÑÏÔÊ¾ÓïÒô°üÕï¶ÏĞÅÏ¢");
         }
 
-        private void VoiceComboBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        private async void VoiceComboBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
         {
-            if (synthesizer != null && VoiceComboBox.SelectedItem != null)
+            if (voiceService != null && VoiceComboBox.SelectedItem != null)
             {
                 try
                 {
                     string? selectedVoice = VoiceComboBox.SelectedItem.ToString();
                     if (!string.IsNullOrEmpty(selectedVoice))
                     {
-                        synthesizer.SelectVoice(selectedVoice);
+                        voiceService.CurrentModel = selectedVoice;
+                        
+                        if (currentEngine == "Piper" && voiceService is PiperVoiceService piperService)
+                        {
+                            if (!piperService.IsVoiceDownloaded(selectedVoice))
+                            {
+                                AddStatusMessage($"ÕıÔÚÏÂÔØÓïÒôÄ£ĞÍ: {selectedVoice}...");
+                                var (success, message) = await piperService.DownloadVoiceAsync(selectedVoice);
+                                AddStatusMessage(message);
+                            }
+                        }
+                        
                         UpdateSettingsDisplay();
-                        AddStatusMessage($"å·²åˆ‡æ¢åˆ°è¯­éŸ³: {selectedVoice}");
+                        AddStatusMessage($"ÒÑÇĞ»»µ½ÓïÒô: {selectedVoice}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    AddStatusMessage($"åˆ‡æ¢è¯­éŸ³å¤±è´¥: {ex.Message}");
+                    AddStatusMessage($"ÇĞ»»ÓïÒôÊ§°Ü: {ex.Message}");
                 }
             }
         }
-        private int originalRate;
-        private int lostRate = -5;
-        private int maxTextLength = 4; // æ–‡æœ¬é•¿åº¦é™åˆ¶
+
+        private double originalRate = 1.0;
+        private double lostRate = 0.7;
+        private int maxTextLength = 4;
 
         private void SpeedSlider_ValueChanged(object? sender, RoutedPropertyChangedEventArgs<double> e)
         {
-            if (synthesizer != null)
+            if (voiceService != null)
             {
-                // å°†æ»‘å—å€¼è½¬æ¢ä¸ºè¯­éŸ³é€Ÿç‡ (-10 åˆ° 10)
-                originalRate = (int)((SpeedSlider.Value - 1.0) * 10);
-                lostRate = (int)(originalRate * 0.5d);
-                synthesizer.Rate = originalRate;
+                originalRate = SpeedSlider.Value;
+                lostRate = originalRate * 0.7;
+                voiceService.Speed = originalRate;
                 SpeedTextBlock.Text = $"{SpeedSlider.Value:F1}x";
                 UpdateSettingsDisplay();
             }
@@ -394,9 +513,9 @@ namespace AutoVoice
 
         private void VolumeSlider_ValueChanged(object? sender, RoutedPropertyChangedEventArgs<double> e)
         {
-            if (synthesizer != null)
+            if (voiceService != null)
             {
-                synthesizer.Volume = (int)VolumeSlider.Value;
+                voiceService.Volume = (int)VolumeSlider.Value;
                 VolumeTextBlock.Text = $"{(int)VolumeSlider.Value}%";
                 UpdateSettingsDisplay();
             }
@@ -416,11 +535,12 @@ namespace AutoVoice
         {
             if (SettingsTextBlock == null) return;
             
-            string voiceName = VoiceComboBox.SelectedItem?.ToString() ?? "æœªé€‰æ‹©";
+            string engineName = voiceService?.EngineName ?? "Î´Ñ¡Ôñ";
+            string voiceName = VoiceComboBox.SelectedItem?.ToString() ?? "Î´Ñ¡Ôñ";
             string speed = SpeedTextBlock?.Text ?? "1.0x";
             string volume = VolumeTextBlock?.Text ?? "100%";
 
-            SettingsTextBlock.Text = $"è¯­éŸ³: {voiceName} | è¯­é€Ÿ: {speed} | éŸ³é‡: {volume} | æ–‡æœ¬é•¿åº¦é™åˆ¶: {maxTextLength}";
+            SettingsTextBlock.Text = $"ÒıÇæ: {engineName} | ÓïÒô: {voiceName} | ÓïËÙ: {speed} | ÒôÁ¿: {volume} | ÎÄ±¾³¤¶ÈÏŞÖÆ: {maxTextLength}";
         }
 
         private void AddStatusMessage(string message)
@@ -432,7 +552,6 @@ namespace AutoVoice
             {
                 StatusTextBlock.Text += fullMessage;
 
-                // è‡ªåŠ¨æ»šåŠ¨åˆ°åº•éƒ¨
                 var scrollViewer = StatusTextBlock.Parent as ScrollViewer;
                 if (scrollViewer != null)
                 {
@@ -443,15 +562,9 @@ namespace AutoVoice
 
         protected override void OnClosed(EventArgs e)
         {
-            // æ¸…ç†èµ„æº
             clipboardTimer?.Stop();
+            voiceService?.Dispose();
 
-            if (synthesizer != null)
-            {
-                synthesizer.Dispose();
-            }
-
-            // ç¡®ä¿æ³¨é”€çƒ­é”®ï¼ˆå¦‚æœè¿˜åœ¨ç›‘å¬çŠ¶æ€ï¼‰
             if (isListening)
             {
                 UnregisterGlobalKeyboardHook();

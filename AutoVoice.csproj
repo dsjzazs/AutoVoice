@@ -8,7 +8,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Speech" Version="7.0.0" />
+    <Compile Remove="piper_data\**" />
+    <EmbeddedResource Remove="piper_data\**" />
+    <None Remove="piper_data\**" />
+    <Page Remove="piper_data\**" />
   </ItemGroup>
 
-</Project> 
+  <ItemGroup>
+    <PackageReference Include="System.Speech" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>
